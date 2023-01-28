@@ -1,0 +1,942 @@
+import React from 'react';
+import { useState } from 'react';
+import { useRouter } from 'next/router';
+import Meta from '/src/components/misc/meta.js';
+import { apiGetTemplates } from './api/get/templates';
+import { apiGetDeviceGroups } from './api/get/groups';
+import { Button, Grid, Typography, Container, Autocomplete, TextField, Box, Stepper, Step, StepLabel, TableContainer, Table, TableHead, TableRow, TableCell, TableBody, Snackbar, Alert } from '@mui/material';
+import { createFilterOptions } from '@mui/base/AutocompleteUnstyled';
+import axios from 'axios';
+import DashboardLayout from "/src/layouts/Dashboard";
+import { getSession } from 'next-auth/react';
+import { apiHandler } from '/src/helpers/apiHandler';
+import { startCase } from 'lodash';
+import { apiGetAlertTypes } from './api/get/alert-types';
+
+export default function AddDevice(props) {
+  const router = useRouter();
+  const steps = ['Device Configuration', 'Connection Info', 'Monitoring and Alerts'];
+  const filter = createFilterOptions();
+  const createdByID = props.session.user.id;
+  const updatedByID = props.session.user.id;
+  const operators = [">", ">=", "<", "<=", "=", "!="]
+  const { status, msg } = router.query;
+  const [severity, setSeverity] = useState(status);
+  var [message, setMessage] = useState(msg);
+  var selectedTemplate = "";
+  var metrics = [];
+  const [open, setOpen] = useState(status == null ? false : true);
+
+  const handleClose = (event, reason) => {
+    if (reason === "clickaway") {
+      return;
+    }
+    setOpen(false);
+  };
+
+  const disabled = (selectedTemp) => { if (selectedTemp === selectedTemplate) return false; };
+
+  const [selectedDevice, setSelectedDevice] = useState();
+
+  const [metricOptions, setMetricOptions] = useState();
+  const [selectedMetrics, setSelectedMetrics] = useState();
+  const handleSelectedMetricsChange = (event, value) => {
+    setSelectedMetrics(value),
+      setOids(value.map(Value => selectedTemplateData.config.metrics[Value].location.slice(14)));
+  };
+
+  const [metricOption, setMetricOption] = useState();
+  const [selectedMetric, setSelectedMetric] = useState();
+
+  const [newTriggersData, setNewTriggersData,] = useState();
+  const handleNewTriggersData = async (event, value) => {
+    event.preventDefault();
+    setNewTriggersData(value);
+  };
+
+  const [selectedAlertTypeData, setSelectedAlertTypeData,] = useState(props.alertTypes[0]);
+  const handleAlertTypeUpdate = (event, value) => setSelectedAlertTypeData(value);
+  const handleAlertTypeChange = (event, newValue) => {
+    if (newValue && newValue.inputValue) {
+      setSelectedAlertTypeData({
+        name: newValue.inputValue,
+        fields: newValue.fields,
+        config: newValue.config
+      });
+    } else {
+      setSelectedAlertTypeData(newValue);
+    }
+  };
+
+  const [selectedGroupsOptions, setSelectedGroupsOptions] = useState([]);
+  const handleSelectGroupsUpdate = (event, value) => setSelectedGroupsOptions(value);
+  const handleGroupChange = (event, newValue) => {
+
+    if (typeof newValue === 'string') {
+
+      setSelectedGroupsOptions({
+        name: newValue,
+      });
+    } else if (newValue && newValue.inputValue) {
+      // Create a new value from the user input
+      setSelectedGroupsOptions({
+        name: newValue.inputValue,
+      });
+    } else {
+      setSelectedGroupsOptions(newValue);
+    }
+  };
+
+  const [selectedTemplateOption, setSelectedTemplateOption] = useState();
+  const [selectedTemplateData, setSelectedTemplateData] = useState("");
+  const handleTemplateChange = async (event, value) => {
+    setSelectedTemplateOption(value);
+    if (value != undefined) {
+      selectedTemplate = await fetchNewTemplatesData(value.id),
+        setSelectedTemplateData(selectedTemplate),
+        metrics = Object.entries(selectedTemplate.config.metrics).map(([key, value]) => key),
+        setMetricOptions(metrics);
+      console.log("m", metrics),
+        console.log("st", selectedTemplate.config.metrics);
+    } else {
+      setSelectedTemplateData();
+      setMetricOptions();
+    };
+  };
+
+  const [cameraId, setCameraId] = useState("");
+  const handleCameraIdChange = (event, value) => setCameraId(value);
+
+  // const [oids, setOids] = useState("1-3-6-1-2-1-25-1-1-0, 1-3-6-1-2-1-1-4-0, 1-3-6-1-2-1-1-1-0, 1-3-6-1-2-1-1-6-0");
+  const [oids, setOids] = useState([]);
+  const handleOidsChange = (event, value) => setOids(value);
+
+  const [communityString, setCommunityString] = useState("public");
+  const handleCommunityStringChange = (event, value) => setCommunityString(value);
+
+  const [username, setUserName] = useState("");
+  const handleUserNameChange = (event, value) => setUserName(value);
+
+  const [password, setPassword] = useState("");
+  const handlePasswordChange = (event, value) => setPassword(value);
+
+  const [connection, setConnection] = useState({});
+  const handleConnectionSNMP = (oids, communityString) => setConnection({ "oids": `${oids}`, "communityString": `${communityString}` });
+  const handleConnectionHanwha = (cameraId, username, password) => setConnection({ "cameraId": `${cameraId}`, "username": `${username}`, "password": `${password}` });
+  // TODO: consider making this more dynamic based on the template
+  const handleConnectionR730 = (username, password) => setConnection({ "username": `${username}`, "password": `${password}` });
+
+  const [deviceName, setDeviceName] = useState("");
+  const handleDeviceNameChange = (event, value) => setDeviceName(event.target.value);
+
+  const [description, setDescription] = useState("");
+  const handleDescriptionChange = (event, value) => setDescription(event.target.value);
+
+  const [interfaceHostName, setInterfaceHostName] = useState("");
+  const handleinterfaceHostNameChange = (event, value) => setInterfaceHostName(event.target.value);
+
+  const [interfaceIp, setInterfaceIp] = useState("");
+  const handleInterfaceIpChange = (event, value) => setInterfaceIp(event.target.value);
+
+  const [overridePort, setOverridePort] = useState("");
+  const handleOverridePortChange = (event, value) => setOverridePort(event.target.value);
+
+  const [activeStep, setActiveStep] = useState(0);
+
+  const [addDeviceState, setAddDeviceState] = useState(0);
+  // addDeviceStates:  0 = Default waiting for Add Device Response, 
+  //                   1 = Add Device Responded with Error,  
+  //                   2 = Add Device Responded Successfuly, Now waiting for Probe Device to return Response.
+  //                   3 = Probe Device Failed
+  //                   4 = Probe Device Succeded
+
+  const handleNext = () => {
+    //returns {InputValue: Bob, Name: Add New Group "Bob"}
+    const filteredGroupData = selectedGroupsOptions.filter(obj => { return obj.inputValue; });
+    if (activeStep === 0 && filteredGroupData.length > 0) { addDeviceGroup(filteredGroupData); };
+    if (activeStep == 1 && selectedTemplateOption?.label === "SNMP") { handleConnectionSNMP(oids, communityString); }
+    if (activeStep == 1 && selectedTemplateOption?.label === "Hanwha Camera Diag") { handleConnectionHanwha(cameraId, username, password); }
+    if (activeStep == 1 && selectedTemplateOption?.label === "Dell R730") { handleConnectionR730(username, password); }
+    if (activeStep === 1) { submitDevice(); };
+    if (activeStep === 2) { router.push(`/?status=success&msg=${deviceName} added`) }
+
+    setActiveStep((prevActiveStep) => prevActiveStep + 1);
+  };
+
+  const handleBack = () => {
+    setActiveStep((prevActiveStep) => prevActiveStep - 1);
+  };
+
+  const handleReset = () => {
+    handleOverridePortChange(event, "");
+    handleinterfaceHostNameChange(event, "");
+    handleDescriptionChange(event, "");
+    handleDeviceNameChange(event, "");
+    handleConnectionHanwha(event, "");
+    handleConnectionR730(event, "");
+    handleConnectionSNMP(event, "");
+    handlePasswordChange(event, "");
+    handleUserNameChange(event, "");
+    handleCommunityStringChange(event, "public");
+    handleOidsChange(event,);
+    handleTemplateChange(event,);
+    setSelectedGroupsOptions([]);
+    setSelectedMetrics();
+    setActiveStep(0);
+    router.push(`add-device`);
+  };
+
+  const addDeviceGroup = async (values) => {
+    //This changes inputValue: to Name:
+    console.log("group value", values)
+    const data = values.map(({ inputValue }, index) => ({ name: JSON.stringify(inputValue) }));
+    await axios.post('/api/create/group', data).then((response) => {
+      console.log("responsedata ", response.data.message),
+        // router.push(`add-device?status=success&msg=${response.data.message}`);
+        setMessage(response.data.message);
+      setSeverity("success");
+      setOpen(true);
+    }, (error) => {
+      console.log("error ", error),
+        // router.push(`add-device?status=error&msg=Failed to create groups ${data}. Try again later or contact support for help.`);
+        setMessage(`Failed to create groups ${data}. Try again later or contact support for help.`);
+      setSeverity("error");
+      setOpen(true);
+    });
+    //after new groups are added, fetch the brand new list of groups.
+    const newGroupsData = await fetchNewGroupsData();
+    //map iterate over selectedGroupOptions array and replace values with {Inputvalue: Bob, Name: Add New GroupBob} with {Groupid: 5, Name: Bob}
+    const newSelectedGroupsOptions = selectedGroupsOptions.map(obj => newGroupsData.results.find(o => o.name === obj.inputValue) || obj);
+    //Replace selected Options with this new list so when we add the devices we can add the device with their newly created groups
+    handleSelectGroupsUpdate(event, newSelectedGroupsOptions);
+  };
+
+
+  const submitDevice = async event => {
+    // Convert object array to json string
+    const groupids = JSON.parse(JSON.stringify(selectedGroupsOptions, ["groupid"]));
+    console.log(connection);
+
+    const data = {
+      device: {
+        name: deviceName,
+        interface_hostname: interfaceHostName,
+        interface_ip: interfaceIp,
+        override_port: parseInt(overridePort),
+        connection: connection,
+        template_id: selectedTemplateOption.id,
+        description: description,
+        created_by: createdByID,
+        updated_by: updatedByID,
+      },
+      devicegroups: {
+        groups: groupids.map(({ groupid }, index) => groupid)
+      }
+    };
+
+    axios.post('/api/create/device', data).then(async (response) => {
+      console.log("create device response ", response);
+      setAddDeviceState(2);
+      router.push(`add-device?status=success&msg=${response.data.message}`);
+      setMessage(response.data.message);
+      setSeverity("success");
+      setOpen(true);
+      await fetchNewDeviceData(response.data.id).then((res) => {
+        console.log("fetch device response", res.results.result[0]);
+        setSelectedDevice(res.results.result[0]);
+        setMetricOption(formatMetricNames(res.results.result[0].template_config.metrics));
+        setAddDeviceState(4);
+      }, (error) => {
+        console.log(error),
+          setAddDeviceState(3);
+      });
+    }, (error) => {
+      console.log(error),
+        setAddDeviceState(1);
+      router.push(`add-device?status=error&msg=Failed to create new device ${deviceName}. Try again later or contact support for help.`);
+      setMessage(`Failed to create new device ${deviceName}. Try again later or contact support for help.`);
+      setSeverity("error");
+      setOpen(true);
+    });
+  };
+
+  const handleMetricsChange = async (event, metric) => {
+    event.preventDefault();
+    setSelectedMetric(metric);
+    setMetricOption(formatMetricNames(selectedDevice.template_config.metrics));
+  };
+
+  const addTrigger = async event => {
+    event.preventDefault();
+    const data = {
+      description: event.target.description.value,
+      config_field: selectedMetric,
+      config_operator: event.target.config_operator.value,
+      config_value: event.target.config_value.value,
+      config_message: event.target.config_message.value,
+      device_id: selectedDevice.id,
+      alertType_id: event.target.selectedAlertTypeData.id
+    };
+    axios.post('/api/create/trigger', data).then(async (response) => {
+      console.log(response),
+        router.push(`add-device?status=success&msg=${response.data.message}`);
+      setMessage(response.data.message);
+      setSeverity("success");
+      setOpen(true);
+      await fetchNewTriggersData().then((response) => {
+        handleNewTriggersData(event, response);
+      });
+    }, (error) => {
+      console.log(error),
+        router.push(`add-device?status=error&msg=Failed to create trigger ${event.target.description.value}. Try again later or contact support for help.`);
+      setMessage(`Failed to create trigger ${event.target.description.value}. Try again later or contact support for help.`);
+      setSeverity("error");
+      setOpen(true);
+    });
+  };
+
+  async function deleteTrigger(triggerid, triggerdesc) {
+    setOpen(false);
+    setOpen(true);
+    const data = {
+      id: triggerid,
+    };
+    axios.post('/api/delete/trigger', data).then(async (response) => {
+      console.log(response),
+        router.push(`add-device?status=success&msg=Trigger "${triggerdesc}" successfully deleted!`);
+      setMessage(`Trigger "${triggerdesc}" successfully deleted!`);
+      setSeverity("success");
+      setOpen(true);
+      await fetchNewTriggersData().then((response) => {
+        handleNewTriggersData(event, response);
+      });
+    }, (error) => {
+      console.log(error),
+        router.push(`add-device?status=error&msg=Failed to delete Trigger ${triggerdesc}. Try again later or contact support for help.`);
+      setMessage(`Failed to delete Trigger ${triggerdesc}. Try again later or contact support for help.`);
+      setSeverity("error");
+      setOpen(true);
+    });
+
+  };
+  const formRef = React.useRef();
+  return (
+    <>
+      <Meta title='Add Device - Serverli M.D.' />
+      <Typography variant="h3" component="h3">Add Device Wizard</Typography>
+      <Snackbar open={open} autoHideDuration={5000} onClose={handleClose} anchorOrigin={{ vertical: "top", horizontal: "center" }}>
+        <Alert variant="filled" severity={severity} onClose={handleClose}>
+          {message}
+        </Alert>
+      </Snackbar>
+      <br />
+      <Box sx={{ width: '100%' }}>
+        <Stepper activeStep={activeStep}>
+          {steps.map((label, index) => {
+            const stepProps = {};
+            const labelProps = {};
+            return (
+              <Step key={label} {...stepProps}>
+                <StepLabel {...labelProps}>{label}</StepLabel>
+              </Step>
+            );
+          })}
+        </Stepper>
+        {activeStep === steps.length ? (
+          <>
+            <Typography sx={{ mt: 2, mb: 1 }}>
+              Device has been added!
+            </Typography><Box sx={{ display: 'flex', flexDirection: 'row', pt: 2 }}>
+              <Box sx={{ flex: '1 1 auto' }} />
+              <Button onClick={handleReset}>Reset</Button>
+            </Box>
+          </>
+        ) : (
+          <>
+            <Typography sx={{ mt: 2, mb: 1 }}>Step {activeStep + 1}</Typography>
+            <br />
+            {activeStep === 0 &&
+              <form id="DeviceConfig" ref={formRef} >
+                <Grid container spacing={3}
+                  direction="row"
+                >
+                  <Grid item xs={12}>
+                    <TextField
+                      variant="outlined"
+                      margin="normal"
+                      required
+                      fullWidth
+                      id="name"
+                      label="Device Name"
+                      name="name"
+                      autoComplete="name"
+                      autoFocus
+                      onChange={handleDeviceNameChange}
+                      value={(deviceName)}
+                    />
+                  </Grid>
+                  <br />
+                  <Grid item xs={4}>
+                    <Autocomplete
+                      margin="normal"
+                      onChange={handleGroupChange}
+                      value={selectedGroupsOptions}
+                      filterOptions={(options, params) => {
+                        const filtered = filter(options, params);
+                        const { inputValue } = params;
+                        // Suggest the creation of a new value
+                        const isExisting = options.some((option) => inputValue === option.name);
+                        if (inputValue !== '' && !isExisting && inputValue.length > 0) {
+                          filtered.push({
+                            inputValue,
+                            name: `Add New Group "${inputValue}"`,
+                          });
+                        }
+                        return filtered;
+                      }}
+                      multiple
+                      fullWidth
+                      selectOnFocus
+                      clearOnBlur
+                      handleHomeEndKeys
+                      id="groups"
+                      options={props.groupsData}
+                      disableCloseOnSelect
+                      getOptionLabel={(option) => {
+                        // Value selected with enter, right from the input
+                        if (typeof option === 'string') {
+                          return option;
+                        }
+                        // Add "xxx" option created dynamically
+                        if (option.inputValue) {
+                          return option.inputValue;
+                        }
+                        // Regular option
+                        return option.name;
+                      }}
+                      isOptionEqualToValue={(option, value) => option.name === value.name}
+                      renderOption={(props, option) => (<li {...props}>{option.name}</li>)}
+                      renderInput={params => (<TextField {...params} label="Groups" variant='outlined' />)}
+                    />
+                  </Grid>
+                  <Grid item xs={8} />
+                  <br />
+                  <Grid item xs={12}>
+                    <TextField
+                      variant="outlined"
+                      margin="normal"
+                      multiline
+                      rows={4}
+                      fullWidth
+                      id="description"
+                      label="Description"
+                      name="description"
+                      autoComplete="description"
+                      onChange={handleDescriptionChange}
+                      defaultValue={(description)}
+                    />
+                  </Grid>
+                </Grid>
+              </form>
+            }
+            {activeStep === 1 &&
+              <form id="Interface" ref={formRef}>
+                <Grid container spacing={3}
+                  direction="row"
+                >
+                  <Grid item xs={4}>
+                    <TextField
+                      name='interface_ip'
+                      variant="outlined"
+                      margin="normal"
+                      fullWidth
+                      id="interface_ip"
+                      label="IP Address"
+                      placeholder="Enter IP Address"
+                      autoFocus
+                      onChange={handleInterfaceIpChange}
+                    />
+                  </Grid>
+                  <Grid item xs={4}>
+                    <TextField
+                      name='interface_hostname'
+                      variant="outlined"
+                      margin="normal"
+                      fullWidth
+                      id="interface_hostname"
+                      label="Hostname"
+                      placeholder="Enter Hostname"
+                      onChange={handleinterfaceHostNameChange}
+                    />
+                  </Grid>
+                  <Grid item xs={4} />
+                  <Grid item xs={4}>
+                    <Autocomplete
+                      margin="normal"
+                      onChange={handleTemplateChange}
+                      value={(selectedTemplateOption ? selectedTemplateOption : null)}
+                      required
+                      sx={{ marginTop: 4 }}
+                      fullWidth
+                      autoFocus
+                      id="templates"
+                      options={props.templatesData}
+                      getOptionLabel={(option) => option.label}
+                      renderInput={(params) => (
+                        <TextField {...params} variant="outlined" label="Connection Templates" required={true} />
+                      )}
+                    />
+                  </Grid>
+                  <Grid item xs={8} />
+                  {selectedTemplateOption?.label === "Hanwha Camera Diag" &&
+                    <>
+                      <Grid item xs={4}>
+                        <TextField
+                          variant="outlined"
+                          margin="normal"
+                          disabled={disabled(selectedTemplateOption)}
+                          fullWidth
+                          id="cameraId"
+                          label="Camera ID"
+                          name="CameraID"
+                          autoComplete="cameraId"
+                          autoFocus
+                          required
+                          onChange={handleCameraIdChange}
+                          value={(cameraId)}
+                        />
+                      </Grid>
+                      <Grid item xs={4}>
+                        <TextField
+                          variant="outlined"
+                          margin="normal"
+                          disabled={disabled(selectedTemplateOption)}
+                          fullWidth
+                          id="username"
+                          label="User Name"
+                          name="username"
+                          autoComplete="username"
+                          autoFocus
+                          onChange={handleUserNameChange}
+                          value={(username)}
+                        />
+                      </Grid>
+                      <Grid item xs={4}>
+                        <TextField
+                          variant="outlined"
+                          margin="normal"
+                          disabled={disabled(selectedTemplateOption)}
+                          fullWidth
+                          type="password"
+                          id="password"
+                          label="Password"
+                          name="password"
+                          autoComplete="password"
+                          onChange={handlePasswordChange}
+                          placeholder="password"
+                          value={(password)}
+                        />
+                      </Grid>
+                    </>
+                  }
+                  {selectedTemplateOption?.label === "Dell R730" &&
+                    <>
+                      <Grid item xs={4}>
+                        <TextField
+                          variant="outlined"
+                          margin="normal"
+                          disabled={disabled(selectedTemplateOption)}
+                          fullWidth
+                          id="username"
+                          label="User Name"
+                          name="username"
+                          autoComplete="username"
+                          autoFocus
+                          onChange={handleUserNameChange}
+                          value={(username)}
+                        />
+                      </Grid>
+                      <Grid item xs={4}>
+                        <TextField
+                          variant="outlined"
+                          margin="normal"
+                          disabled={disabled(selectedTemplateOption)}
+                          fullWidth
+                          type="password"
+                          id="password"
+                          label="Password"
+                          name="password"
+                          autoComplete="password"
+                          onChange={handlePasswordChange}
+                          placeholder="password"
+                          value={(password)}
+                        />
+                      </Grid>
+                    </>
+                  }
+                  {selectedTemplateOption?.label === "SNMP" &&
+                    <>
+                      {metricOptions &&
+                        <Grid item xs={4}>
+                          <Autocomplete
+                            margin="dense"
+                            loading={!selectedTemplateData}
+                            value={(selectedMetrics) ? (selectedMetrics) : metricOptions}
+                            onChange={handleSelectedMetricsChange}
+                            multiple
+                            required
+                            fullWidth
+                            sx={{ marginTop: 4 }}
+                            id="selectedMetrics"
+                            options={metricOptions}
+                            getOptionLabel={(option) => selectedTemplateData.config.metrics[option]?.label}
+                            isOptionEqualToValue={(option, value) => option == value}
+                            disabled={disabled(selectedTemplateOption)}
+                            renderInput={(params) => (
+                              <TextField {...params} variant="outlined" label="Metrics(oids)" />
+                            )}
+                          />
+                        </Grid>
+                      }
+                      <Grid item xs={4}>
+                        <TextField
+                          variant="outlined"
+                          margin="normal"
+                          disabled={disabled(selectedTemplateOption)}
+                          fullWidth
+                          id="community_string"
+                          label="Community String"
+                          name="communityString"
+                          autoComplete="communityString"
+                          onChange={handleCommunityStringChange}
+                          defaultValue={(communityString)}
+                        />
+                      </Grid>
+                      <Grid item xs={4} />
+
+                    </>
+                  }
+                </Grid>
+              </form>
+            }
+            {activeStep === 2 &&
+              <>
+                {addDeviceState === 2 &&
+                  <Typography>
+                    Device Added Succesfully! Now Probing Device.
+                  </Typography>
+                }
+                {addDeviceState === 0 &&
+                  <Typography>
+                    Standby Adding New Device:{deviceName} the Database...
+                  </Typography>
+                }
+                {addDeviceState === 1 &&
+                  <Typography>
+                    Something Went Wrong go back!!@#$#%
+                  </Typography>
+                }
+                {addDeviceState === 4 &&
+                  <>
+                    <form onSubmit={addTrigger} ref={formRef}>
+                      <Grid container maxWidth="xl">
+                        <Grid item container spacing={2}>
+                          <Grid item xs={12}>
+                            <TextField
+                              variant="outlined"
+                              margin="normal"
+                              fullWidth
+                              id="description"
+                              label="Trigger Description"
+                              name="description"
+                              autoComplete="Trigger Description"
+                              autoFocus
+                            />
+                          </Grid>
+                        </Grid>
+                        <Grid item container spacing={2} alignItems="center">
+                          <Grid item xs={3}>
+                            <Autocomplete
+                              margin="normal"
+                              onChange={(event, option) => {
+                                if (option !== null) {
+                                  handleMetricsChange(event, option);
+                                }
+                              }}
+                              required
+                              fullWidth
+                              clearOnBlur
+                              handleHomeEndKeys
+                              disableCloseOnSelect
+                              id="metrics"
+                              options={metricOption}
+                              getOptionLabel={(option) => formatOptionLabel(option)}
+                              isOptionEqualToValue={(option, value) => option === value}
+                              renderOption={(props, option) => (<li {...props}>{option}</li>)}
+                              renderInput={(params) => (
+                                <TextField {...params} variant="outlined" label="Metric" />
+                              )}
+                            />
+                          </Grid>
+                          <Grid item xs={1}>
+                            <Autocomplete
+                              margin="normal"
+                              fullWidth
+                              id="config_operator"
+                              options={operators}
+                              getOptionSelected={(option, value) => option[0] === value[0]}
+                              renderInput={(params) => (
+                                <TextField {...params} variant="outlined" label="Operator" />
+                              )}
+                            />
+                          </Grid>
+                          <Grid item xs={3}>
+                            <TextField
+                              variant="outlined"
+                              fullWidth
+                              id="config_value"
+                              label="Config Value"
+                              name="config_value"
+                              autoComplete="config_value"
+                            />
+                          </Grid>
+                          <Grid item xs={5}>
+                            <TextField
+                              variant="outlined"
+                              fullWidth
+                              id="config_message"
+                              label="Message"
+                              name="config_Message"
+                              autoComplete="config_Message"
+                            />
+                          </Grid>
+                          <Grid item xs={4}>
+                            <Autocomplete
+                              margin="normal"
+                              onChange={handleAlertTypeChange}
+                              value={selectedAlertTypeData}
+                              filterOptions={(options, params) => {
+                                const filtered = filter(options, params);
+                                const { inputValue } = params;
+                                // Suggest the creation of a new value
+                                const isExisting = options.some((option) => inputValue === option.name);
+                                if (inputValue !== '' && !isExisting && inputValue.length > 0) {
+                                  filtered.push({
+                                    inputValue,
+                                    name: `Add New AlertType "${inputValue}"`,
+                                    fields: [
+                                      'port',
+                                      'server',
+                                      'toEmail',
+                                      'password',
+                                      'username',
+                                      'fromEmail'
+                                    ],
+                                    config: {
+                                      port: '',
+                                      server: '',
+                                      toEmail: '',
+                                      password: '',
+                                      username: '',
+                                      fromEmail: ''
+                                    },
+                                  });
+                                }
+                                return filtered;
+                              }}
+                              fullWidth
+                              clearOnBlur
+                              handleHomeEndKeys
+                              id="AlertType"
+                              options={props.alertTypes}
+                              getOptionLabel={(option) => {
+                                // Value selected with enter, right from the input
+                                if (typeof option === 'string') {
+                                  return option;
+                                }
+                                // Add "xxx" option created dynamically
+                                if (option.inputValue) {
+                                  return option.inputValue;
+                                }
+                                // Regular option
+                                return option.name;
+                              }}
+                              isOptionEqualToValue={(option, value) => option.name === value.name}
+                              renderOption={(props, option) => (<li {...props}>{option.name}</li>)}
+                              renderInput={(params) => (
+                                <TextField {...params} variant="outlined" label="AlertType" />
+                              )}
+                            />
+                          </Grid>
+                          <Grid item xs={8}/>
+                          {selectedAlertTypeData.fields.map((field, index) => (
+                            <Grid item xs={2} key={index}>
+                              <TextField
+                                variant="outlined"
+                                fullWidth
+                                id={field}
+                                label={field}
+                                name={field}
+                                type={field === 'password' ? 'password' : 'text'}
+                                defaultValue={selectedAlertTypeData.config[field]}
+                              />
+                            </Grid>
+                          ))}
+                        </Grid>
+                      </Grid>
+                      <br />
+                      <Grid item container direction="column">
+                        <Grid item xs={12}>
+                          <Button
+                            type="submit"
+                            fullWidth
+                            variant="contained"
+                            color="primary"
+                          >
+                            Add Trigger
+                          </Button>
+                        </Grid>
+                      </Grid>
+                    </form>
+                    <br />
+                    <Container maxWidth="xl">
+                      <Grid container spacing={3}>
+                      </Grid>
+                      {newTriggersData?.length > 0 && <>
+                        <hr />
+                        <TableContainer maxWidth="xl">
+                          <Table aria-label="simple table" xs={12}>
+                            <TableHead>
+                              <TableRow>
+                                <TableCell>Description</TableCell>
+                                <TableCell>config_field</TableCell>
+                                <TableCell>config_operator</TableCell>
+                                <TableCell>config_value</TableCell>
+                                <TableCell>config_message</TableCell>
+                                <TableCell>device_id</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {newTriggersData.map((trigger, index) => (
+                                <TableRow key={trigger.id}>
+                                  <TableCell>{trigger.description} ({trigger.id})</TableCell>
+                                  <TableCell>{trigger.config_field} </TableCell>
+                                  <TableCell>{trigger.config_operator} </TableCell>
+                                  <TableCell>{trigger.config_value} </TableCell>
+                                  <TableCell>{trigger.config_message} </TableCell>
+                                  <TableCell>{trigger.device_id} </TableCell>
+                                  <TableCell>
+                                    <Button size="small" variant="contained" color="secondary" onClick={() => deleteTrigger(trigger.id, trigger.description)}>Delete</Button>
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      </>}
+                      <Snackbar open={open} autoHideDuration={5000} onClose={handleClose} anchorOrigin={{ vertical: "top", horizontal: "center" }}>
+                        <Alert variant="filled" severity={severity} onClose={handleClose}>
+                          {message}
+                        </Alert>
+                      </Snackbar>
+                    </Container>
+                  </>
+                }
+              </>
+            }
+            <Box sx={{ display: 'flex', flexDirection: 'row', pt: 2 }}>
+              <Button color="inherit" disabled={activeStep === 0} onClick={handleBack} sx={{ mr: 1 }}>
+                Back
+              </Button>
+              <Box sx={{ flex: '1 1 auto' }} />
+              <Button onClick={handleReset} color="error">Reset</Button>
+              <Button onClick={() => { if (formRef.current.reportValidity()) { handleNext(); } }}>
+                {activeStep === steps.length - 1 ? 'Finish' : 'Next'}
+              </Button>
+            </Box>
+          </>
+        )
+        }
+      </Box >
+    </>
+  );
+}
+
+export async function getServerSideProps(context) {
+
+  const session = await getSession(context);
+  const groupsData = await apiGetDeviceGroups();
+  const alertTypes = await apiGetAlertTypes();
+  const templatesDataRaw = await apiGetTemplates();
+  const templatesData = [];
+  console.log("alertTypes", alertTypes)
+
+  templatesDataRaw.forEach((x) => {
+    templatesData.push({ label: x.name, id: parseInt(x.templateid) });
+  });
+
+  return {
+    props: {
+      groupsData,
+      templatesData,
+      alertTypes,
+      session
+    }
+  };
+}
+
+const formatMetricNames = (metrics) => {
+  return Object.entries(metrics).map((option, index) => {
+    let metricName = option[0];
+    if (metricName.includes("response.data.")) {
+      option[0] = metricName.replace("response.data.", "");
+    }
+    else if (metricName.includes("response_data_")) {
+      option[0] = metricName.replace("response_data_", "");
+    }
+    option[0] = startCase(option[0]);
+    return option[0];
+  });
+};
+
+const formatOptionLabel = (option) => {
+  if (option.includes("response.data.")) {
+    option = option.replace("response.data.", "");
+  } else if (option.includes("response_data_")) {
+    option = option.replace("response_data_", "");
+  }
+  return startCase(option);
+};
+
+
+const fetchNewGroupsData = async function () {
+  const newGroupsData = await axios.get("/api/get/groups");
+  return newGroupsData.data;
+};
+
+const fetchNewAlertTypeData = async function () {
+  const newAlertTypeData = await axios.get("/api/get/alert-types");
+  return newAlertTypeData.data;
+};
+
+const fetchNewTriggersData = async function () {
+  const newTriggersData = await axios.get("/api/get/triggers");
+  console.log("New Triggers Data", newTriggersData);
+  return newTriggersData.data.results;
+};
+
+const fetchNewTemplatesData = async function (id) {
+  const newTemplateData = await apiHandler("POST", "/api/get/templates", { id: parseInt(id) });
+  console.log("New templates Data", newTemplateData.results[0]);
+  return newTemplateData.results[0];
+};
+
+const fetchNewDeviceData = async function (id) {
+  console.log("this is the id", id);
+  const newDeviceData = await apiHandler("POST", "/api/get/device", { deviceId: parseInt(id) });
+  return newDeviceData;
+};
+
+AddDevice.getLayout = function getLayout(page) {
+  return <DashboardLayout>{page}</DashboardLayout>;
+};
